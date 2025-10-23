@@ -1,0 +1,111 @@
+model:
+  sample_bb: True
+  sample_seq: True
+  sample_sc: True
+  name: bfn_quat
+  sc_pack: generated
+
+  encoder:
+    node_embed_size: 128
+    edge_embed_size: 64
+    ipa:
+      c_s: 128 #${model.node_embed_size}
+      c_z: 64 #${model.edge_embed_size}
+      c_hidden: 128
+      no_heads: 8
+      no_qk_points: 8
+      no_v_points: 12
+      seq_tfmr_num_heads: 4
+      seq_tfmr_num_layers: 2
+      num_blocks: 6
+      stop_grad: False
+      quat4_update: false
+      angle_fourier_feat: True
+      ipa_with_sc: False
+
+  interpolant:
+    sample_sequence: True
+    sample_structure: True
+    seqs:
+      num_classes: 20
+      simplex_value: 5.0
+    sampling:
+      num_timesteps: 100
+    self_condition: False
+  bfn:
+    n_steps: 200
+    sigma1_trans: 0.03162277660168379
+    beta1_seq: 0.5
+    beta1_ang: 1000
+    beta1_quat: 1000
+    dtime_loss: true
+    cond_acc: true
+    remov_ang_in: false 
+    use_quat: true
+    beta1_quat: 1000
+    only_psi: true
+    use_seq_sc_mask: true
+
+  norm:
+    std: 5.06555
+
+train:
+  loss_weights:
+    trans_loss: 0.5 # 1.0 for dreamfold, 0.05 for yim
+    rot_loss: 0.5 # 1.0 for dreamfold, 0.5 for yim
+    bb_atom_loss: 0.25
+    seqs_loss: 1.0
+    angle_loss: 1.0
+    torsion_loss: 0.5
+    rot_axis_loss: 1.0
+    rot_angle_loss: 1.0
+
+  max_iters: 400000000
+  run_gen: true
+  val_freq: 5000
+  metric_freq: 10000
+  batch_size: 40
+  accum_grad: 1
+  seed: 114514
+  max_grad_norm: 100.0
+  optimizer:
+    type: adam
+    lr: 5.e-4 #1.e-4
+    weight_decay: 0.0
+    beta1: 0.9
+    beta2: 0.999
+  scheduler:
+    type: plateau
+    factor: 0.8
+    patience: 10
+    min_lr: 5.e-6
+  ema:
+    enable: true
+    decay: 0.9995
+    update_after_step: 5000
+    update_every: 1
+dataset:
+  name: pepbench
+  n_gen_samples: 40
+  train:
+    type: peprec
+    structure_dir: ./probayes_data/pepbench_probayes_processed/pdbs
+    dataset_dir: ./probayes_data/pepbench_probayes_processed/fixed_data
+    name: train
+    reset: False
+  val:
+    type: peprec
+    structure_dir: ./probayes_data/pepbench_probayes_processed/pdbs
+    dataset_dir: ./probayes_data/pepbench_probayes_processed/fixed_data
+    name: valid
+    reset: False
+  test:
+    type: peprec
+    structure_dir: ./probayes_data/LNR_probayes_processed/pdbs
+    dataset_dir: ./probayes_data/pepbench_probayes_processed/fixed_data
+    name: test
+    reset: False
+
+wandb:
+  mode: offline
+

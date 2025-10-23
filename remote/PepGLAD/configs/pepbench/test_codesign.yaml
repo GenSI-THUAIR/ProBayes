@@ -1,0 +1,30 @@
+dataset:
+  train:
+    class: CoDesignDataset
+    mmap_dir: /data/wuhl/bfn4pep/remote/PepGLAD/datasets/train_valid/processed
+    specify_index: /data/wuhl/bfn4pep/remote/PepGLAD/datasets/train_valid/processed/train_index.txt
+    backbone_only: false
+    cluster: /data/wuhl/bfn4pep/remote/PepGLAD/datasets/train_valid/train.cluster
+    use_covariance_matrix: true
+  valid:
+    class: CoDesignDataset
+    mmap_dir: /data/wuhl/bfn4pep/remote/PepGLAD/datasets/train_valid/processed
+    specify_index: /data/wuhl/bfn4pep/remote/PepGLAD/datasets/train_valid/processed/valid_index.txt
+    backbone_only: false
+    use_covariance_matrix: true
+  test:
+    class: CoDesignDataset
+    mmap_dir: /data/wuhl/bfn4pep/remote/PepGLAD/datasets/LNR/processed
+    backbone_only: false
+    use_covariance_matrix: true
+
+dataloader:
+  num_workers: 4
+  batch_size: 64
+
+backbone_only: false
+n_samples: 40
+
+sample_opt:
+  energy_func: default
+  energy_lambda: 0.8

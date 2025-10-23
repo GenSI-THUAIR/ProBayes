@@ -1,0 +1,19 @@
+dataset:
+  test:
+    class: CoDesignDataset
+    mmap_dir: ./datasets/pepbdb/processed
+    specify_index: ./datasets/pepbdb/processed/test_index.txt
+    backbone_only: false
+    use_covariance_matrix: true
+
+dataloader:
+  num_workers: 4
+  batch_size: 64
+
+backbone_only: false
+struct_only: true
+n_samples: 10
+
+sample_opt:
+  energy_func: default
+  energy_lambda: 0.8

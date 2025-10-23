@@ -1,0 +1,1 @@
+python ./generate_dataset_metric.py --config ./configs/pepbdb/test_codesign.yaml --ckpt ./checkpoints/codesign_pepbdb.ckpt

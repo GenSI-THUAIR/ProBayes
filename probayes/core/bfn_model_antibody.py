@@ -1,0 +1,558 @@
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+import copy
+import math
+from tqdm.auto import tqdm
+import functools
+from torch.utils.data import DataLoader
+from torch import tensor
+import os
+import argparse
+
+import pandas as pd
+
+from probayes.core.edge import EdgeEmbedder
+from probayes.core.node import NodeEmbedder
+from probayes.modules.common.layers import sample_from, clampped_one_hot
+from probayes.modules.net.ga import GAEncoder
+from probayes.modules.protein.constants import AA, BBHeavyAtom, max_num_heavyatoms
+from probayes.modules.common.geometry import construct_3d_basis
+from probayes.utils.data import PaddingCollate
+from probayes.utils.misc import seed_all
+from probayes.utils.train import sum_weighted_losses
+from torch.nn.utils import clip_grad_norm_
+
+from probayes.modules.so3.dist import centered_gaussian,uniform_so3
+from probayes.modules.common.geometry import batch_align, align
+
+from tqdm import tqdm
+from typing import Callable
+import wandb
+
+from probayes.data import so3_utils
+from probayes.data import all_atom
+
+from probayes.utils.misc import load_config
+from probayes.utils.train import recursive_to
+from easydict import EasyDict
+
+from probayes.core.utils import process_dic
+from probayes.core.torsion import get_torsion_angle, torsions_mask
+import probayes.core.torus as torus
+from probayes.modules.net.ga_bfn_quat_ipa import GAEncoder_BFN
+import gc
+
+from copy import deepcopy
+from probayes.utils.data import PaddingCollate
+collate_fn = PaddingCollate(eight=False)
+from probayes.utils.train import recursive_to
+from probayes.modules.bfn.bfn_base import bfnBase
+import probayes.utils.rotation_conversions as rc
+from remote.diffab.diffab.modules.encoders.residue import ResidueEmbedding
+from tqdm import trange
+
+# from probayes.modules.net.ga_bfn_quat import GAEncoder_BFN # ablation
+
+class BFNModel_Antibody(nn.Module):
+    def __init__(self,cfg):
+        super().__init__()
+        self._model_cfg = cfg.encoder
+        self._interpolant_cfg = cfg.interpolant
+
+        self.node_embedder = ResidueEmbedding(cfg.encoder.node_embed_size,max_num_heavyatoms)
+        self.edge_embedder = EdgeEmbedder(cfg.encoder.edge_embed_size,max_num_heavyatoms)
+        self.ga_encoder:GAEncoder_BFN = GAEncoder_BFN(cfg.encoder.ipa, cfg.bfn)
+
+        # self.sample_structure = self._interpolant_cfg.sample_structure
+        self.cfg = cfg
+
+        self.sample_seq = self.cfg.sample_seq if 'sample_seq' in self.cfg.keys() else True
+        self.sample_bb = self.cfg.sample_bb if 'sample_bb' in self.cfg.keys() else True
+        self.sample_sc = self.cfg.sample_sc if 'sample_sc' in self.cfg.keys() else True
+        
+        self.K = self._interpolant_cfg.seqs.num_classes
+        
+        self.BFN:bfnBase = bfnBase()
+        
+        self.sigma1_trans = torch.tensor(self.cfg.bfn.sigma1_trans)
+        self.beta1_seq = torch.tensor(self.cfg.bfn.beta1_seq)
+        self.beta1_ang = torch.tensor(self.cfg.bfn.beta1_ang)
+        self.beta1_quat = torch.tensor(self.cfg.bfn.beta1_quat)
+        self.n_steps = self.cfg.bfn.n_steps
+        self.use_dtime_loss = self.cfg.bfn.dtime_loss
+        self.epsilon = torch.tensor(1e-7)
+        
+        self.only_psi = self.cfg.bfn.only_psi if 'only_psi' in self.cfg.bfn.keys() else False
+    
+    def encode(self, batch):
+        rotmats_1 =  construct_3d_basis(batch['pos_heavyatom'][:, :, BBHeavyAtom.CA],batch['pos_heavyatom'][:, :, BBHeavyAtom.C],batch['pos_heavyatom'][:, :, BBHeavyAtom.N] )
+        trans_1 = batch['pos_heavyatom'][:, :, BBHeavyAtom.CA]
+        seqs_1 = batch['aa']
+        
+        angles_1 = batch['torsion_angle']
+
+        context_mask = torch.logical_and(batch['mask_heavyatom'][:, :, BBHeavyAtom.CA], ~batch['generate_mask'])
+        # structure_mask = context_mask if self.sample_structure else None
+        structure_mask = context_mask if (self.sample_bb or self.sample_sc) else None
+    
+        sequence_mask = context_mask if self.sample_seq else None
+        node_embed = self.node_embedder(batch['aa'], batch['res_nb'], batch['chain_nb'], batch['pos_heavyatom'], 
+                                        batch['mask_heavyatom'],batch['fragment_type'], structure_mask=structure_mask, sequence_mask=sequence_mask)
+        edge_embed = self.edge_embedder(batch['aa'], batch['res_nb'], batch['chain_nb'], batch['pos_heavyatom'], 
+                                        batch['mask_heavyatom'], structure_mask=structure_mask, sequence_mask=sequence_mask)
+        
+        return rotmats_1, trans_1, angles_1, seqs_1, node_embed, edge_embed
+    
+    def zero_center_part(self,pos,gen_mask,res_mask):
+        """
+        move pos by center of gen_mask
+        pos: (B,N,3)
+        gen_mask, res_mask: (B,N)
+        """
+        center = torch.sum(pos * gen_mask[...,None], dim=1) / (torch.sum(gen_mask,dim=-1,keepdim=True) + 1e-8) # (B,N,3)*(B,N,1)->(B,3)/(B,1)->(B,3)
+        center = center.unsqueeze(1) # (B,1,3)
+        # center = 0. it seems not center didnt influence the result, but its good for training stabilty
+        pos = pos - center
+        pos = pos * res_mask[...,None]
+        return pos,center
+    
+    def augment_quat(self, quat):
+        rand_v = (torch.rand_like(quat[...,:1]) > 0.5).double()
+        return quat * ((-1) ** rand_v)
+    
+    def forward(self, batch):
+        num_batch, num_res = batch['aa'].shape
+        DEVICE = batch['aa'].device
+        gen_mask,res_mask,angle_mask = batch['generate_mask'].long(),batch['res_mask'].long(),batch['torsion_angle_mask'].long()
+        #encode
+        rotmats_1, trans_1, angles_1, seqs_1, node_embed, edge_embed = self.encode(batch) # no generate mask
+        trans_1 = trans_1 / self.cfg.norm.std # norm
+        quat_1 = rc.matrix_to_quaternion(rotmats_1)
+        
+        # random augmentation for quaternion
+        quat_1 = self.augment_quat(quat_1).float()
+
+        # prepare for denoise
+        seqs_1_onehot = clampped_one_hot(seqs_1, self.K).float()
+
+        with torch.no_grad():
+            t_index = torch.randint(1, self.n_steps+1,size=(num_batch,1), 
+                            device=batch['aa'].device)
+            t = (t_index - 1) / self.n_steps
+            
+            if self.sample_bb:
+                # corrupt trans
+                mu_trans_t, _ = self.BFN.continuous_var_bayesian_flow(
+                    t=t[...,None], sigma1=self.sigma1_trans, x=trans_1
+                )
+                mu_trans_t = self.recover_gt(gen_mask, mu_trans_t, trans_1)
+
+                # corrupt quaternion
+                m_quat_t, acc_quat_t = self.BFN.sphere_var_bayesian_flow_sim(
+                    x=quat_1, t_index=t_index, beta1=self.beta1_quat, N=self.n_steps, cache_sampling=True
+                )
+                m_quat_t = self.recover_gt(gen_mask, m_quat_t, quat_1)
+                acc_quat_t = self.recover_acc(gen_mask, acc_quat_t)
+            else:
+                mu_trans_t = trans_1.detach().clone()
+                m_quat_t = quat_1.detach().clone()
+                acc_quat_t = torch.ones_like(m_quat_t[..., :1])
+            
+            if self.sample_sc:
+                # corrup angles
+                m_angles_t, acc_angle_t = self.BFN.circular_var_bayesian_flow_sim(
+                    x=angles_1,t_index=t_index, N=self.n_steps, beta1=self.beta1_ang,epsilon=self.epsilon)
+                m_angles_t = self.recover_gt(gen_mask, m_angles_t, angles_1)
+                acc_angle_t = self.recover_acc(gen_mask, acc_angle_t)
+            else:
+                m_angles_t = angles_1.detach().clone()
+                acc_angle_t = torch.ones_like(m_angles_t[..., :1])
+            
+            if self.sample_seq:
+                # corrupt seqs
+                theta_seqs_t = self.BFN.discrete_var_bayesian_flow(t=t[...,None], beta1=self.beta1_seq, x=seqs_1_onehot, K=self.K)
+                theta_seqs_t = self.recover_gt(gen_mask, theta_seqs_t, seqs_1_onehot)
+                # theta_seqs_t = torch.where(batch['generate_mask'][..., None],theta_seqs_t,seqs_1_onehot)
+            else:
+                theta_seqs_t = seqs_1_onehot.detach().clone()
+
+
+        # denoise
+        pred_quat_1, pred_trans_1, pred_angles_1, pred_seqs_1_prob = self.ga_encoder(
+            t, m_quat_t, mu_trans_t, m_angles_t, theta_seqs_t, node_embed, edge_embed, gen_mask, res_mask, acc_angle_t, acc_quat_t)
+        
+        pred_seqs_1 = sample_from(pred_seqs_1_prob)
+        pred_seqs_1 = torch.where(batch['generate_mask'],pred_seqs_1,torch.clamp(seqs_1,0,19))
+        # TODO: do we need this?
+        pred_trans_1_c = pred_trans_1 # implicitly enforce zero center in gen_mask, in this way, we dont need to move receptor when sampling
+        pred_rotmats_1 = rc.quaternion_to_matrix(pred_quat_1)
+
+        # bb aux loss
+        gt_bb_atoms = all_atom.to_atom37(trans_1, rotmats_1)[:, :, :3] 
+        pred_bb_atoms = all_atom.to_atom37(pred_trans_1_c, pred_rotmats_1)[:, :, :3]
+
+        bb_atom_loss = torch.sum(
+            (gt_bb_atoms - pred_bb_atoms) ** 2 * gen_mask[..., None, None],
+            dim=(-1, -2, -3)
+        ) / (torch.sum(gen_mask,dim=-1) + 1e-8) # (B,)
+        bb_atom_loss = torch.mean(bb_atom_loss)
+
+        # seqs vf loss
+        mask = torch.gt(gen_mask,0)
+        selected_i = t_index.unsqueeze(-1).repeat(1,num_res,1)[mask,:]
+        seqs_loss = self.BFN.dtime4discrete_loss_prob(
+            i=selected_i,
+            N=self.n_steps,
+            beta1=self.beta1_seq,
+            one_hot_x=seqs_1_onehot[mask,:],
+            p_0=pred_seqs_1_prob[mask,:],
+            K=self.K
+        )
+        trans_loss = self.BFN.dtime4continuous_loss(
+            i=selected_i, N=self.n_steps,
+            sigma1=self.sigma1_trans,
+            x_pred=pred_trans_1_c[mask,:],
+            x=trans_1[mask,:]
+        )
+        # we should not use angle mask, as you dont know aa type when generating
+      
+        # angle vf loss
+        angle_mask_loss = torsions_mask.to(batch['aa'].device)
+        angle_mask = angle_mask_loss[pred_seqs_1.reshape(-1)].reshape(num_batch,num_res,-1) # (B,L,5)
+        
+        if not self.cfg.bfn.use_seq_sc_mask:
+            angle_mask = batch['generate_mask'][...,None].bool().repeat(1,1,5) 
+        else:
+            angle_mask = torch.logical_and(batch['generate_mask'][...,None].bool(),angle_mask)
+
+        # if self.only_psi:
+        #     angle_mask[:,:,1:] = torch.zeros_like(angle_mask[:,:,1:])  
+            
+        angle_mask = torch.gt(angle_mask,0)
+        
+        angle_selected_i = t_index.unsqueeze(-1).repeat(1,num_res,5)[angle_mask]
+        angle_loss = self.BFN.dtime4circular_loss(
+            x=angles_1[angle_mask],x_pred=pred_angles_1[angle_mask], i=angle_selected_i,N=self.n_steps,
+            mse_loss=False,beta1=self.beta1_ang
+        )
+
+        torsion_loss = torch.tensor(0.)
+        
+        # quat for rot loss
+        rot_loss = self.BFN.dtime4sphere_loss(
+            x=quat_1[mask,:], x_pred=pred_quat_1[mask,:],
+            t_index=selected_i, N=self.n_steps, beta1=self.beta1_quat, p=4
+        )
+
+        return {
+            "trans_loss": trans_loss,
+            'rot_loss': rot_loss,
+            'bb_atom_loss': bb_atom_loss,
+            'seqs_loss': seqs_loss,
+            'angle_loss': angle_loss,
+            'torsion_loss': torsion_loss,
+        }
+    
+    
+    def recover_gt(self, gen_mask, gen_state, gt_state):
+        '''
+        gen_mask: (num_batch, num_res)
+        '''
+        assert gen_state.shape == gt_state.shape and gen_mask.shape[:2] == gen_state.shape[:2]
+        mask = gen_mask[[...]+[None]*(gen_state.dim()-gen_mask.dim())]
+        
+        return torch.where(mask.bool(), gen_state, gt_state)
+    
+    def recover_acc(self, gen_mask, acc):
+        assert gen_mask.shape[:2] == acc.shape[:2]
+        mask = gen_mask[[...]+[None]*(acc.dim()-gen_mask.dim())]
+        return torch.where(mask.bool(), acc, torch.ones_like(acc))
+    
+    def init_params(self, batch, quat_1, rotmats_1, trans_1, seqs_1, angles_1, sample_bb, sample_ang, sample_seq, mode='rand'):
+        if mode != 'rand':
+            raise NotImplementedError('Only rand mode is implemented')
+                #initial noise
+        
+        DEVICE = batch['aa'].device
+        num_batch, num_res = batch['aa'].shape
+        gen_mask,res_mask = batch['generate_mask'],batch['res_mask']
+        # #encode
+        # rotmats_1, trans_1, angles_1, seqs_1, node_embed, edge_embed = self.encode(batch) 
+        
+        # trans_1 = trans_1 / self.cfg.norm.std # norm
+        # quat_1 = rc.matrix_to_quaternion(rotmats_1)
+        seqs_1_onehot = clampped_one_hot(seqs_1, self.K).float()
+
+        #initial noise
+        if sample_bb:
+            rotmats_t = uniform_so3(num_batch,num_res,device=batch['aa'].device)
+            rotmats_t = torch.where(batch['generate_mask'][...,None,None],rotmats_t,rotmats_1)
+            quat_t = rc.matrix_to_quaternion(rotmats_t)
+            quat_t = self.recover_gt(gen_mask, quat_t, quat_1)
+            acc_quat_t = torch.zeros_like(quat_t[..., :1])
+            # bfn translation prior
+            mu_trans_t = torch.zeros((num_batch,num_res,3), device=batch['aa'].device)
+            acc_trans_t = torch.zeros((num_batch,num_res,3), device=batch['aa'].device)
+            acc_trans_t = self.recover_acc(gen_mask, acc_trans_t)
+            mu_trans_t = self.recover_gt(gen_mask, mu_trans_t, trans_1)  
+        else:
+            mu_trans_t = trans_1.detach().clone()
+            acc_trans_t = torch.ones((num_batch,num_res,3), device=batch['aa'].device)
+            quat_t = quat_1.detach().clone()
+            acc_quat_t = torch.ones_like(quat_t[..., :1])
+            
+        if sample_ang:
+            # angle noise
+            m_angles_t = torus.tor_random_uniform(angles_1.shape, device=batch['aa'].device, dtype=angles_1.dtype) # (B,L,5)
+            m_angles_t = self.recover_gt(gen_mask, m_angles_t, angles_1)
+            acc_angle_t = self.BFN.circular_norm_logbeta(
+                            torch.log(torch.tensor((self.epsilon))) * torch.ones_like(m_angles_t),
+                            # torch.tensor((self.epsilon)) * torch.ones_like(m_angles_t),
+                            beta1=self.beta1_ang,epsilon=self.epsilon)
+        else:
+            m_angles_t = angles_1.detach().clone()
+            acc_angle_t = torch.ones_like(m_angles_t[..., :1])
+            
+        # seq
+        if sample_seq:
+            # sequence parameter init
+            theta_seqs_t = torch.ones((num_batch, num_res, self.K)).to(DEVICE) / self.K  # [N, N_AA, K] discrete prior
+            theta_seqs_1 = clampped_one_hot(seqs_1, self.K).float()
+            # theta_seqs_t = torch.where(batch['generate_mask'][..., None], theta_seqs_t, theta_seqs_1)
+            theta_seqs_t = self.recover_gt(gen_mask, theta_seqs_t, theta_seqs_1)
+        else:
+            theta_seqs_t = seqs_1_onehot.detach().clone()
+    
+        return quat_t, acc_quat_t, mu_trans_t, acc_trans_t, m_angles_t, acc_angle_t, theta_seqs_t
+    
+        return EasyDict({
+            # rotation
+            'quat_t': quat_t,
+            'acc_quat_t': acc_quat_t,
+            # translation
+            'trans_t': mu_trans_t,
+            'acc_trans_t': acc_trans_t,
+            # angles
+            'angles_t': m_angles_t,
+            'acc_angle_t': acc_angle_t,   
+            # seqs
+            'seqs_t': theta_seqs_t,         
+        })
+    
+    
+    def update_trans(self, mu_trans_t, acc_trans_t, pred_trans_1, t_index, t_next, mode='end_back'):
+        t_index = t_index[..., None] # (B, 1, 1)
+        # update translation
+        if mode == 'end_back':
+            # t_next = (t_index + 1 - 1) / self.n_steps
+            next_mu_trans_t, _ = self.BFN.continuous_var_bayesian_flow(
+                        t=t_next, sigma1=self.sigma1_trans, x=pred_trans_1)
+            next_acc_trans_t = self.sigma1_trans ** (-2 * t_next) - 1
+        elif mode == 'vanilla':
+            # t = (t_index - 1) / self.n_steps
+            # gamma = 1 - torch.pow(self.sigma1_trans, 2 * t)
+            alpha = torch.pow(self.sigma1_trans, -2 * t_index / self.n_steps) * (
+                1 - torch.pow(self.sigma1_trans, 2 / self.n_steps)
+            )
+            y = pred_trans_1 + torch.randn_like(pred_trans_1) * torch.sqrt(1 / alpha)
+            next_mu_trans_t = (acc_trans_t * mu_trans_t + alpha * y) / (acc_trans_t + alpha)
+            next_acc_trans_t = acc_trans_t + alpha
+        else:
+            raise NotImplementedError('Only end_back and vanilla mode are implemented')
+        return next_mu_trans_t, next_acc_trans_t
+    
+    def update_angle(self, m_angles_t, acc_angle_t, pred_angles_1, t_index, mode='end_back'):
+        # update angles
+        # t_index = t_index[..., None] # (B, 1)
+        if mode == 'end_back':
+            next_m_angles_t, next_acc_angle_t = self.BFN.circular_var_bayesian_flow_sim(
+                x=pred_angles_1, t_index=t_index+1, beta1=self.beta1_ang, N=self.n_steps, epsilon=self.epsilon)
+        elif mode == 'vanilla':
+            t_index = t_index[..., None]
+            alpha_i = self.BFN.alpha_wrt_index(t_index,N=self.n_steps,beta1=self.beta1_ang)
+            conc_prev = self.BFN.circular_denorm_conc(acc_angle_t, beta1=self.beta1_ang, epsilon=self.epsilon)
+            next_m_angles_t, conc_next = self.BFN.circular_var_bayesian_update(loc_prev=m_angles_t, 
+                                                                            conc_prev=conc_prev,
+                                                                            alpha=alpha_i,
+                                                                            pred_x=pred_angles_1
+                                                                            )
+            next_acc_angle_t = self.BFN.circular_norm_logbeta(logbeta=(conc_next+self.epsilon).log(),beta1=self.beta1_ang, epsilon=self.epsilon)
+        
+        return next_m_angles_t, next_acc_angle_t 
+    
+    def update_quat(self, quat_t, acc_quat_t, pred_quat_1, t_index, mode='vanilla'):
+        # update quaternion
+        if mode == 'end_back':
+            next_quat_t, next_acc_quat_t = self.BFN.sphere_var_bayesian_flow_sim(
+                x=pred_quat_1, t_index=t_index+1, beta1=self.beta1_quat, N=self.n_steps, cache_sampling=True
+            )
+        elif mode == 'vanilla':
+            t_index = t_index[..., None]
+            conc_prev = self.BFN.sphere_denorm_conc(normed_log_conc=acc_quat_t, beta1=self.beta1_quat)
+            next_quat_t, next_conc = self.BFN.sphere_var_bayesian_update(
+                loc_prev=quat_t, conc_prev=conc_prev, pred_x=pred_quat_1, t_index=t_index, n_steps=self.n_steps, beta1=self.beta1_quat, p=4
+            )
+            next_acc_quat_t = self.BFN.sphere_norm_log_conc(logbeta=(next_conc+self.epsilon).log(), beta1=self.beta1_quat)
+        return next_quat_t, next_acc_quat_t.float()
+    
+    def update_seq(self, theta_seq_t, pred_seqs_1_prob, t_index, t_next, mode='vanilla'):
+        # update seqs
+        if mode == 'end_back':
+            # t_index = t_index[..., None]
+            # t_next = (t_index + 1 - 1) / self.n_steps
+            next_theta_seqs_t = self.BFN.discrete_var_bayesian_flow(
+                t=t_next, beta1=self.beta1_seq,
+                x=pred_seqs_1_prob, K=self.K
+            )
+        elif mode == 'vanilla':
+            t_index = t_index[..., None]
+            alpha_i = self.beta1_seq * (2 * t_index - 1) / (self.n_steps**2)
+            k = torch.distributions.Categorical(probs=pred_seqs_1_prob).sample()
+            e_k = F.one_hot(k, num_classes=self.K).float()
+            # y ~ N(α(Ke_k − 1) , αKI)
+            mean = alpha_i * (self.K * e_k - 1)
+            # var = alpha_i * self.K
+            # std = torch.full_like(mean, fill_value=var).sqrt()
+            std = (alpha_i * self.K).sqrt()
+            y_h = mean + std * torch.randn_like(e_k)
+            # for discrete, Eq.(171): h(θi−1, y, α) := e**y * θ_{i−1} / \sum_{k=1}^K e**y_k (θ_{i−1})_k
+            theta_prime = torch.exp(y_h) * theta_seq_t  # e^y * θ_{i−1}
+            next_theta_seqs_t = theta_prime / theta_prime.sum(dim=-1, keepdim=True)
+        else:
+            raise NotImplementedError('Only end_back and vanilla mode are implemented')
+        return next_theta_seqs_t
+    
+    @torch.no_grad()
+    def sample(self, batch, num_steps, sample_bb, sample_ang, sample_seq, mode='end_back'):
+        print('sample_mode:',mode)
+        DEVICE = batch['aa'].device
+        num_batch, num_res = batch['aa'].shape
+        gen_mask,res_mask = batch['generate_mask'],batch['res_mask']
+        angle_mask_loss = torsions_mask.to(batch['aa'].device)
+        num_steps = self.n_steps
+        # #encode
+        rotmats_1, trans_1, angles_1, seqs_1, node_embed, edge_embed = self.encode(batch) 
+        
+        trans_1 = trans_1 / self.cfg.norm.std # norm
+        quat_1 = rc.matrix_to_quaternion(rotmats_1)
+        seqs_1_onehot = clampped_one_hot(seqs_1, self.K).float()
+
+        # #initial noise
+
+        quat_t, acc_quat_t, mu_trans_t, acc_trans_t, m_angles_t, acc_angle_t, theta_seqs_t = self.init_params(
+            batch=batch, quat_1=quat_1, rotmats_1=rotmats_1, trans_1=trans_1, seqs_1=seqs_1, angles_1=angles_1,
+            sample_bb=sample_bb, sample_ang=sample_ang, sample_seq=sample_seq
+        )
+
+        clean_traj = []
+        
+        
+        # denoise loop
+        # for idx in torch.range(1, num_steps+1):
+        for idx in trange(1, num_steps+1, desc='sampling', leave=False, dynamic_ncols=True):
+            t_1 = (idx - 1) / num_steps
+            t_2 = idx / num_steps
+            # t_1 = idx / num_steps
+            # t_2 = (idx + 1) / num_steps
+            t = torch.ones((num_batch, 1), device=batch['aa'].device) * t_1
+            t_index = t * self.n_steps + 1
+
+            pred_quat_1, pred_trans_1, pred_angles_1, pred_seqs_1_prob = self.ga_encoder(
+                t, quat_t, mu_trans_t, m_angles_t, 
+                theta_seqs_t, node_embed, edge_embed, 
+                batch['generate_mask'].long(), batch['res_mask'].long(),acc_angle_t, acc_quat_t)
+            
+            pred_quat_1 = self.recover_gt(gen_mask, pred_quat_1, quat_1)
+            pred_trans_1 = self.recover_gt(gen_mask, pred_trans_1, trans_1)
+            pred_angles_1 = self.recover_gt(gen_mask, pred_angles_1, angles_1)
+            pred_seqs_1 = sample_from(pred_seqs_1_prob)
+            pred_seqs_1 = self.recover_gt(gen_mask, pred_seqs_1, seqs_1)
+            # TODO: check seq-angle
+            torsion_mask = angle_mask_loss[pred_seqs_1.reshape(-1)].reshape(num_batch,num_res,-1) # (B,L,5)
+            
+            # if self.only_psi:
+            #     torsion_mask[:,:,1:] = torch.zeros_like(torsion_mask[:,:,1:])
+            
+            pred_angles_1 = torch.where(torsion_mask.bool(),pred_angles_1,torch.zeros_like(pred_angles_1))
+            
+            if not sample_bb:
+                pred_trans_1 = trans_1.detach().clone()
+                pred_quat_1 = quat_1.detach().clone()
+            
+            # TODO: check if we need to detach O-atom angle prediction
+            if not sample_ang:
+                pred_angles_1 = angles_1.detach().clone()
+            
+            if not sample_seq:
+                pred_seqs_1 = seqs_1.detach().clone()
+            
+            clean_traj.append({'rotmats':rc.quaternion_to_matrix(pred_quat_1).cpu(),
+                               'trans':(pred_trans_1* self.cfg.norm.std).cpu(),
+                               'angles':pred_angles_1.cpu(),
+                               'seqs':pred_seqs_1.cpu(),
+                                'rotmats_1':rotmats_1.cpu(),
+                                'trans_1':(trans_1 * self.cfg.norm.std).cpu(),
+                                'angles_1':angles_1.cpu(),
+                                'seqs_1':seqs_1.cpu()})
+            
+            if idx == num_steps:
+                return clean_traj
+            
+            # update all params
+            mu_trans_t, acc_trans_t = self.update_trans(mu_trans_t=mu_trans_t,acc_trans_t=acc_trans_t, 
+                                                        pred_trans_1=pred_trans_1, t_index=t_index, t_next=t_2, mode=mode)
+            mu_trans_t = self.recover_gt(gen_mask, mu_trans_t, trans_1)
+            # acc_trans_t = self.recover_acc(gen_mask, acc_trans_t)
+
+            quat_t, acc_quat_t = self.update_quat(quat_t=quat_t, acc_quat_t=acc_quat_t, 
+                                                  pred_quat_1=pred_quat_1, t_index=t_index, mode=mode)
+                                                
+            quat_t = self.recover_gt(gen_mask, quat_t, quat_1)
+            acc_quat_t = self.recover_acc(gen_mask, acc_quat_t)
+            
+            # angles
+            m_angles_t, acc_angle_t = self.update_angle(
+                m_angles_t=m_angles_t, acc_angle_t=acc_angle_t, pred_angles_1=pred_angles_1, 
+                t_index=t_index, mode=mode)
+            m_angles_t = self.recover_gt(gen_mask, m_angles_t, angles_1)
+            acc_angle_t = self.recover_acc(gen_mask, acc_angle_t)
+            
+            # seqs
+            theta_seqs_t = self.update_seq(
+                theta_seq_t=theta_seqs_t, pred_seqs_1_prob=pred_seqs_1_prob, t_index=t_index, t_next=t_2, mode=mode)
+            theta_seqs_t = self.recover_gt(gen_mask, theta_seqs_t, seqs_1_onehot)
+            
+            # TODO: do we need this ?
+            seqs_t_2 = sample_from(theta_seqs_t)
+            seqs_t_2 = self.recover_gt(gen_mask, seqs_t_2, seqs_1)
+            if not sample_seq:
+                seqs_t_2 = sample_from(seqs_1_onehot.detach().clone())
+            
+            # seq-angle
+            torsion_mask = angle_mask_loss[seqs_t_2.reshape(-1)].reshape(num_batch,num_res,-1) # (B,L,5)
+            if self.only_psi:
+                # torsion_mask[gen_mask][:,1:] = torch.zeros_like(torsion_mask[gen_mask][:,1:])
+                torsion_mask[gen_mask][:,1:] = 0.
+
+                
+            m_angles_t = torch.where(torsion_mask.bool(),m_angles_t,torch.zeros_like(m_angles_t))
+            acc_angle_t = torch.where(torsion_mask.bool(),acc_angle_t,torch.ones_like(acc_angle_t))
+            
+            if not sample_bb:
+                mu_trans_t = trans_1.detach().clone()
+                quat_t = quat_1.detach().clone()
+                acc_quat_t = torch.ones_like(quat_t[..., :1])
+            
+            if not sample_ang:
+                m_angles_t = angles_1.detach().clone()
+                acc_angle_t = torch.ones_like(m_angles_t[..., :1])
+            
+            if not sample_seq:
+                theta_seqs_t = seqs_1_onehot.detach().clone()
+
+        return clean_traj
+
+

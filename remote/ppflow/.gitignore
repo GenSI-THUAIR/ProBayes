@@ -1,0 +1,20 @@
+*.pdb
+# bin/
+dataset/
+PPDBench/
+
+wandb/
+*.txt
+*.pyc
+
+logs/
+
+*.zip
+*.pt
+data/
+*.whl
+*.png
+*.csv
+*.tsv
+*.npy
+results/
