@@ -32,8 +32,10 @@ pip install -e .
 ### Download Datasets
 Download the pre-processed dataset files in this [link](https://drive.google.com/file/d/1vEctafwfOnBFm_bFZhFMmVQytVd9P2gE/view?usp=drive_link).
 And unzip it in the project root.
+
+Raw data can be found in [PepBench&PepBDB](https://zenodo.org/records/13373108) and [SAbDab&RAbD](https://github.com/THUNLP-MT/dyMEAN).
 ### Download Pre-Compute Cache
-Download the pre-computed cache files in this [link](https://drive.google.com/file/d/18_zHYOZYiVIMKx0sXe_2xYNFa7l4r3Tc/view?usp=sharing).
+Download the pre-computed cache files for Bayesian flow in this [link](https://drive.google.com/file/d/18_zHYOZYiVIMKx0sXe_2xYNFa7l4r3Tc/view?usp=sharing).
 And unzip it in the project root.
 
 ### Download Checkpoint
