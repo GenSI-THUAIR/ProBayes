@@ -106,6 +106,3 @@ source scripts/train_ddp_antibody_codesign.sh
 The default setting requires 4x80GB GPUs for 10~24 hours.
 
 
-TODO:
-1. 删掉之前的diversity计算
-2. 删掉无用的代码
