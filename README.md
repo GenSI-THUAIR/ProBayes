@@ -3,11 +3,8 @@ Official implementation of [Rationalized All-Atom Protein Design with Unified Mu
 
 Table of Content
 - [Environment Set Up](#environment-set-up)
-- [Download Datasets](#download-datasets)
-- [Download Pre-Compute Cache](#download-pre-compute-cache)
-- [Download Checkpoint](#download-checkpoint)
-- [Project Structure](#project-structure)
-- [Evaluation](#evaluation)
+- [Benchmark Metrics Reimplementation](#benchmark-metrics-reimplementation)
+- [Training](#training)
 ## Environment Set Up
 Run the following script to install most of the packages.
 ```
@@ -32,18 +29,18 @@ pip install torch-scatter==2.1.2+pt20cu117 -f https://data.pyg.org/whl/torch-2.0
 ```
 pip install -e .
 ```
-## Download Datasets
+### Download Datasets
 Download the pre-processed dataset files in this [link](https://drive.google.com/file/d/18_zHYOZYiVIMKx0sXe_2xYNFa7l4r3Tc/view?usp=sharing).
 And unzip it in the project root.
-## Download Pre-Compute Cache
+### Download Pre-Compute Cache
 Download the pre-computed cache files in this [link](https://drive.google.com/file/d/18_zHYOZYiVIMKx0sXe_2xYNFa7l4r3Tc/view?usp=sharing).
 And unzip it in the project root.
 
-## Download Checkpoint
+### Download Checkpoint
 We provide our checkpoints and the designed PDB files for benchmark (PepBench, PepBDB, RAbD) evaluation [here](https://drive.google.com/drive/folders/1rnqwKgjFAtKvpQXL-fZxp0T10OF5RvxK?usp=drive_link).
 
 
-## Project Structure
+### Project Structure
 After installation, the project structure should be like:
 ```
 /probayes
@@ -75,7 +72,7 @@ You may need to add the execuation permission for DockQ evaluation.
 chmod +x /GenSIvePFS/wuhl/probayes/remote/PepGLAD/evaluation/DockQ/fnat
 chmod +x /GenSIvePFS/wuhl/probayes/remote/ppflow/bin/TMscore/TMscore
 ```
-All training and evaluation scripts can be found in `scripts/`. For reimplementing the benchmark metric scores, you can choose the desired dataset by switching the `CKPT_DIR` variable in the bash file.
+All training and evaluation scripts can be found in `scripts/`. For reimplementing the benchmark metric scores:
 1. Peptide codesign
 ```
 source scripts/eval_ckpt_peptide.sh
@@ -88,7 +85,7 @@ source scripts/eval_ckpt_folding.sh
 ```
 source scripts/eval_ckpt_antibody.sh
 ```
-
+You can choose the desired dataset by switching the `CKPT_DIR` variable in the bash file.
 ## Training
 We provide our training scripts here:
 1. Peptide codesign
@@ -103,6 +100,14 @@ source scripts/train_ddp_pep_folding.sh -d pepbench
 ```
 source scripts/train_ddp_antibody_codesign.sh
 ```
-The default setting requires 4x80GB GPUs for 10~24 hours.
+The default setting requires 4x80GB GPUs for 10~24 hours. You can check the benchmark scores in wandb.
 
+# Acknowledgements
 
+We would like to express our gratitude to the following repositories for their valuable contributions:
+
+*   [**diffab**](https://github.com/luost26/diffab)
+*   [**dyMEAN**](https://github.com/THUNLP-MT/dyMEAN)
+*   [**PepGLAD**](https://github.com/THUNLP-MT/PepGLAD)
+*   [**ppflow**](https://github.com/EDAPINENUT/ppflow)
+*   [**PepFlow**](https://github.com/Ced3-han/PepFlowww)
