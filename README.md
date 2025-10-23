@@ -30,7 +30,7 @@ pip install torch-scatter==2.1.2+pt20cu117 -f https://data.pyg.org/whl/torch-2.0
 pip install -e .
 ```
 ### Download Datasets
-Download the pre-processed dataset files in this [link](https://drive.google.com/file/d/18_zHYOZYiVIMKx0sXe_2xYNFa7l4r3Tc/view?usp=sharing).
+Download the pre-processed dataset files in this [link](https://drive.google.com/file/d/1vEctafwfOnBFm_bFZhFMmVQytVd9P2gE/view?usp=drive_link).
 And unzip it in the project root.
 ### Download Pre-Compute Cache
 Download the pre-computed cache files in this [link](https://drive.google.com/file/d/18_zHYOZYiVIMKx0sXe_2xYNFa7l4r3Tc/view?usp=sharing).
