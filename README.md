@@ -1,4 +1,4 @@
-# ProteoBayes
+# ProBayes
 Official implementation of [Rationalized All-Atom Protein Design with Unified Multi-modal Bayesian Flow](https://openreview.net/forum?id=3p4272zl7q).
 
 Table of Content

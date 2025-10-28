@@ -25,7 +25,8 @@ def _get_residue_heavyatom_info(res: Residue):
             mask_heavyatom[idx] = True
     return pos_heavyatom, mask_heavyatom
 
-from remote.RDE_PPI.rde.utils.protein.icoord import get_chi_angles, get_backbone_torsions
+# from remote.RDE_PPI.rde.utils.protein.icoord import get_chi_angles, get_backbone_torsions
+from probayes.data.parsers import get_chi_angles, get_backbone_torsions
 
 def parse_biopython_structure(entity, unknown_threshold=1.0, max_resseq=None):
     chains = Selection.unfold_entities(entity, 'C')

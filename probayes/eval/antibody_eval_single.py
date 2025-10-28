@@ -37,7 +37,7 @@ from remote.diffab.diffab.utils.data import apply_patch_to_tensor
 ATOM_MASK = torch.tensor(residue_constants.restype_atom14_mask)
 collate_fn = PaddingCollate(eight=False)
 from probayes.utils.misc import load_config
-from train_bfn import get_model
+from train_pep import get_model
 from probayes.utils.misc import seed_all
 from remote.diffab.diffab.utils.transforms import get_transform
 from remote.PepGLAD.data.converter.pdb_to_list_blocks import pdb_to_list_blocks

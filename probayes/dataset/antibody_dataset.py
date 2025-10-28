@@ -25,7 +25,7 @@ from remote.diffab.diffab.datasets.sabdab import preprocess_sabdab_structure,nan
 import os
 import numpy as np
 from anarci.anarci import get_identity
-os.chdir('/data/wuhl/bfn4pep')
+# os.chdir('/data/wuhl/bfn4pep')
 
 
 class AntibodyDataset(Dataset):
