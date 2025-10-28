@@ -66,13 +66,16 @@ RUN git clone https://github.com/GenSI-THUAIR/ProBayes
 RUN cd ProBayes && pip install -v --progress-bar=on --no-cache-dir -e .
 
 # move ProBayes to workspace
-RUN mv ProBayes /workspace/ProBayes && cd /workspace/ProBayes
+RUN mv ProBayes /workspace/ProBayes && cd /workspace/ProBayes && rm -rf /workspace/probayes
 
-# activate environment
-RUN eval "$(micromamba shell hook -s bash)" && micromamba activate probayes
+# auto-activate environment when entering container
+RUN micromamba shell init -s bash && \
+    echo "micromamba activate probayes" >> /root/.bashrc && \
+    echo 'alias conda="micromamba"' >> /root/.bashrc
 
+WORKDIR /workspace/ProBayes
 # usage:
-# build image: docker build -t probayes:micromamba . --progress=plain
+# build image: docker build -t probayes:latest . --progress=plain
 # run container: docker run --gpus all -it probayes:latest
 
 
