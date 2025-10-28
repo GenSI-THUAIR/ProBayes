@@ -1,0 +1,74 @@
+# Version control
+.git
+.git/*
+.gitmodules
+
+# Python caches/build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.build/
+dist/
+build/
+.cache/
+.mypy_cache/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Virtual/conda/mamba envs
+.venv/
+venv/
+env/
+.env
+.env.*
+.conda/
+.mamba/
+
+# IDE/editor
+.vscode/
+.idea/
+
+# Large data, models, logs, results
+data/
+dataset/
+datasets/
+ckpt/
+ckpts/
+checkpoint/
+checkpoints/
+models/
+outputs/
+output/
+logs/
+results/
+experiments/
+wandb/
+cache/
+.tmp/
+tmp/
+.temp/
+
+# Common large files
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.bin
+*.npz
+*.npy
+*.tar
+*.tar.gz
+*.zip
+*.7z
+*.rar
+
+# OS junk
+.DS_Store
+
+# Model hubs/caches (optional)
+.huggingface/
+.hf/
+
+# Node
+node_modules/
