@@ -69,7 +69,7 @@ After installation, the project structure should be like:
 ```
 
 ## Benchmark Metrics Reimplementation
-You may need to add the execuation permission for DockQ evaluation.
+You may need to add the execuation permission for DockQ evaluation. e.g.
 ```
 chmod +x /GenSIvePFS/wuhl/probayes/remote/PepGLAD/evaluation/DockQ/fnat
 chmod +x /GenSIvePFS/wuhl/probayes/remote/ppflow/bin/TMscore/TMscore
