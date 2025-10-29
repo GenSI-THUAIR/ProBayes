@@ -1,5 +1,11 @@
-# ProBayes
+# [NeurIPS 2025] ProBayes
 Official implementation of [Rationalized All-Atom Protein Design with Unified Multi-modal Bayesian Flow](https://openreview.net/forum?id=3p4272zl7q).
+
+[![Paper](https://img.shields.io/badge/paper-5f16a8?style=for-the-badge&logo=arxiv&logoColor=white)](https://openreview.net/forum?id=3p4272zl7q)
+[![Weights](https://img.shields.io/badge/Model%20Weights-63cad3?style=for-the-badge&logo=huggingface&logoColor=white)](https://drive.google.com/drive/folders/1rnqwKgjFAtKvpQXL-fZxp0T10OF5RvxK?usp=sharing)
+[![Dataset](https://img.shields.io/badge/Datasets-4d8cd8?style=for-the-badge&logo=huggingface&logoColor=white)](https://drive.google.com/drive/folders/1rnqwKgjFAtKvpQXL-fZxp0T10OF5RvxK?usp=sharing)
+[![Docker Badge](https://img.shields.io/badge/docker-257bd6?logo=docker&logoColor=white&style=for-the-badge)](https://hub.docker.com/r/hanlinwu/probayes)
+
 
 Table of Content
 - [Environment Set Up](#environment-set-up)
