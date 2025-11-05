@@ -91,6 +91,11 @@ You may need to add the execuation permission for DockQ evaluation. e.g.
 chmod +x probayes/remote/PepGLAD/evaluation/DockQ/fnat
 chmod +x probayes/remote/ppflow/bin/TMscore/TMscore
 ```
+And compile the TMScore.cpp
+```
+g++ -static -O3 -ffast-math -lm -o evaluation/TMscore evaluation/TMscore.cpp
+```
+
 All training and evaluation scripts can be found in `scripts/`. For reimplementing the benchmark metric scores:
 1. Peptide codesign
 ```
