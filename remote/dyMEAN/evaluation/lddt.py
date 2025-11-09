@@ -13,7 +13,7 @@ def exec_bin(mod_pdb, ref_pdb, log, backbone_only):
     options = '-x'
     if backbone_only:
         options += ' -c'
-    cmd = f'/data/wuhl/anaconda3/envs/flow/bin/lddt {options} {mod_pdb} {ref_pdb} > {log} 2>&1'
+    cmd = f'lddt {options} {mod_pdb} {ref_pdb} > {log} 2>&1'
     return os.system(cmd)
 
 

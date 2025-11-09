@@ -1,5 +1,4 @@
 import numpy as np
-from probayes.core.flow_model import FlowModel
 from tqdm import tqdm
 import gc
 import torch
@@ -99,7 +98,7 @@ def structure2temppdb(structure):
 #     io.save(temp_pdb_path)
 #     return temp_pdb_path, temp_pdb_file
 
-def get_metrics(model:FlowModel, val_dataset:PepDataset, n_steps=200, sample_bb=True, sample_ang=True, sample_seq=True, device='cuda',n_samples=64):
+def get_metrics(model, val_dataset:PepDataset, n_steps=200, sample_bb=True, sample_ang=True, sample_seq=True, device='cuda',n_samples=64):
     model.eval()
     esm_helper = ESM_Helper(device=device)
     aars, rmsds, BSRs, SSRs = [], [], [], []
@@ -317,7 +316,7 @@ class Evaluator:
         metrics.update(self.get_novelty())
         return metrics
 
-def prepare_result_json(ckpt_path:str, model:FlowModel, val_dataset:PepDataset,
+def prepare_result_json(ckpt_path:str, model, val_dataset:PepDataset,
                           n_steps=200, sample_bb=True, sample_ang=True,
                           sample_seq=True, device='cuda',n_samples=64, dataset_pdb_dir=None, sample_mode=None,sc_pack='rosetta'):
     

@@ -22,7 +22,6 @@ from probayes.utils.data import PaddingCollate
 
 from probayes.core.utils import process_dic
 
-from probayes.core.flow_model import FlowModel
 from probayes.core.bfn_model_quat import BFNModel_quat
 from probayes.core.torsion import full_atom_reconstruction, get_heavyatom_mask
 from probayes.eval.geometry import get_side_chain_metrics
@@ -62,7 +61,7 @@ def _mask_select(v, mask):
     else:
         return v
 
-def sample_from_data(data, model:FlowModel, device, num_steps=200, num_samples=1, sample_bb=True,sample_ang=True,sample_seq=True):
+def sample_from_data(data, model, device, num_steps=200, num_samples=1, sample_bb=True,sample_ang=True,sample_seq=True):
     batch = recursive_to(item_to_batch(data, nums=num_samples),device=device)
     traj = model.sample(batch, num_steps=num_steps,sample_bb=sample_bb,sample_ang=sample_ang,sample_seq=sample_seq)
     final = recursive_to(traj[-1], device=device)
