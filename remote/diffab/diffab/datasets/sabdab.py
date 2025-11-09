@@ -405,8 +405,7 @@ class SAbDabDataset(Dataset):
         SeqIO.write(cdr_records, fasta_path, 'fasta')
 
         cmd = ' '.join([
-            # 'mmseqs', 'easy-cluster',
-            '/mnt/data/wuhl/anaconda3/envs/flow/bin/mmseqs', 'easy-cluster',
+            'mmseqs', 'easy-cluster',
             os.path.realpath(fasta_path),
             'cluster_result', 'cluster_tmp',
             '--min-seq-id', '0.5',

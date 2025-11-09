@@ -95,9 +95,9 @@ dataset:
   n_gen_samples: 3
   train:
     type: peprec
-    structure_dir: /data/wuhl/bfn4pep/remote/dyMEAN/all_data/pdb
-    split_json_path: /data/wuhl/bfn4pep/probayes_data/antibody_processed/train.json
-    dataset_dir: /data/wuhl/bfn4pep/probayes_data/antibody_processed/fixed_data
+    structure_dir: probayes_data/antibody_processed/pdb
+    split_json_path: probayes_data/antibody_processed/train.json
+    dataset_dir: probayes_data/antibody_processed/fixed_data
     name: train
     reset: False
     transform:
@@ -108,9 +108,9 @@ dataset:
     - type: patch_around_anchor
   val:
     type: peprec
-    structure_dir: /data/wuhl/bfn4pep/remote/dyMEAN/all_data/pdb
-    split_json_path: /data/wuhl/bfn4pep/probayes_data/antibody_processed/valid.json
-    dataset_dir: /data/wuhl/bfn4pep/probayes_data/antibody_processed/fixed_data
+    structure_dir: probayes_data/antibody_processed/pdb
+    split_json_path: probayes_data/antibody_processed/valid.json
+    dataset_dir: probayes_data/antibody_processed/fixed_data
     name: valid
     reset: False
     transform:
@@ -121,9 +121,9 @@ dataset:
     - type: patch_around_anchor
   test:
     type: peprec
-    structure_dir: /data/wuhl/bfn4pep/remote/dyMEAN/all_data/pdb
-    split_json_path: /data/wuhl/bfn4pep/probayes_data/antibody_processed/test.json
-    dataset_dir: /data/wuhl/bfn4pep/probayes_data/antibody_processed/fixed_data
+    structure_dir: probayes_data/antibody_processed/pdb
+    split_json_path: probayes_data/antibody_processed/test.json
+    dataset_dir: probayes_data/antibody_processed/fixed_data
     name: test
     reset: False
     transform:
