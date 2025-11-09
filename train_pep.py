@@ -18,29 +18,11 @@ from probayes.utils.train import ScalarMetricAccumulator, count_parameters, get_
 from probayes.utils.metrics import get_metrics
 from probayes.dataset.pep_dataset import PepDataset
 
-from probayes.core.flow_model import FlowModel
-from probayes.core.flow_model_debug import FlowModel as FlowModel_debug
-from probayes.core.flow_model_ar import FlowModel_AR
 
-from probayes.core.bfn_model_debug import BFNModel_debug
-from probayes.core.bfn_model_trans import BFNModel_Trans
-from probayes.core.bfn_model_axis_angle_new import BFNModel_AxisAngle_new
 from probayes.core.bfn_model_quat import BFNModel_quat
 from probayes.core.bfn_model_antibody import BFNModel_Antibody
 def get_model(config):
-    if config.model.name == 'fm':
-        model = FlowModel(config.model)
-    elif config.model.name == 'fm_debug':
-        model = FlowModel_debug(config.model)
-    elif config.model.name == 'bfn_debug':
-        model = BFNModel_debug(config.model)
-    elif config.model.name == 'bfn_trans':
-        model = BFNModel_Trans(config.model)
-    elif config.model.name == 'fm_ar':
-        model = FlowModel_AR(config.model)
-    elif config.model.name == 'bfn_axis_angle_new':
-        model = BFNModel_AxisAngle_new(config.model)
-    elif config.model.name == 'bfn_quat':
+    if config.model.name == 'bfn_quat':
         model = BFNModel_quat(config.model)
     elif config.model.name == 'bfn_antibody':
         model = BFNModel_Antibody(config.model)
